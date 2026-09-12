@@ -1,0 +1,128 @@
+{
+  "project_name": "MediPassport",
+  "archetype": "Clinical Trust & Calm Organic",
+  "theme_strategy": {
+    "default_mode": "light",
+    "mode_toggle_supported": true,
+    "rationale": "Medical and personal health applications require high contrast, calm readability, and pristine clinical trust. Soft alabaster whites and calm slate/teal accents evoke sterile warmth rather than cold hospital starkness."
+  },
+  "typography": {
+    "headline_font": "Plus Jakarta Sans, sans-serif",
+    "body_font": "IBM Plex Sans, sans-serif",
+    "mono_font": "JetBrains Mono, monospace",
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-slate-900 leading-tight",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl font-semibold tracking-tight text-slate-900",
+      "h3": "text-xl sm:text-2xl font-semibold text-slate-900",
+      "h4": "text-lg sm:text-xl font-medium text-slate-800",
+      "body": "text-base text-slate-600 leading-relaxed",
+      "caption": "text-xs font-medium uppercase tracking-wider text-slate-500",
+      "code_pin": "font-mono text-lg font-bold tracking-widest text-emerald-700 bg-emerald-50 px-3 py-1 rounded-md border border-emerald-200"
+    }
+  },
+  "colors": {
+    "background_light": "#F8FAFC",
+    "surface_light": "#FFFFFF",
+    "surface_subtle": "#F1F5F9",
+    "text_primary": "#0F172A",
+    "text_secondary": "#475569",
+    "text_muted": "#64748B",
+    "primary": "#0F766E",
+    "primary_hover": "#0D9488",
+    "primary_light": "#CCFBF1",
+    "accent_blue": "#2563EB",
+    "accent_blue_light": "#EFF6FF",
+    "security_green": "#059669",
+    "security_green_light": "#ECFDF5",
+    "warning_amber": "#D97706",
+    "warning_light": "#FFFBEB",
+    "danger_red": "#DC2626",
+    "danger_light": "#FEF2F2",
+    "border_light": "#E2E8F0",
+    "border_focus": "#0F766E",
+    "dark_mode": {
+      "background": "#0F172A",
+      "surface": "#1E293B",
+      "surface_subtle": "#334155",
+      "text_primary": "#F8FAFC",
+      "text_secondary": "#94A3B8",
+      "border": "#334155"
+    }
+  },
+  "surface_strategy": {
+    "card_style": "bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xs hover:shadow-md transition-all duration-200 p-6",
+    "clinical_container": "bg-slate-50/80 dark:bg-slate-900/50 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 sm:p-8",
+    "glass_override": "Use solid flat surfaces instead of heavy translucent glassmorphism for medical data legibility.",
+    "border_radius": "rounded-xl for cards and buttons, rounded-2xl for main containers, rounded-full for pills/badges"
+  },
+  "layout_and_spacing": {
+    "dashboard_grid": "grid grid-cols-1 lg:grid-cols-12 gap-6 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto",
+    "bento_spans": {
+      "hero_quick_upload": "lg:col-span-8 row-span-1",
+      "security_command_bar": "lg:col-span-4 row-span-1",
+      "recent_records": "lg:col-span-8 row-span-2",
+      "active_shares": "lg:col-span-4 row-span-1",
+      "audit_mini_widget": "lg:col-span-4 row-span-1",
+      "health_vitals_summary": "lg:col-span-12"
+    },
+    "padding_rules": "Generous spacing philosophy: p-6 or p-8 inside cards to prevent data collision. Minimum section vertical gap py-12 to py-20."
+  },
+  "key_features_design": {
+    "dashboard_security_first": {
+      "security_status_widget": "Prominently displays 2FA status badge ('Active & Enforced'), Active Devices counter ('2 trusted devices'), Zero-Knowledge Encryption badge ('Client-Encrypted Vault'), and quick Revoke Access trigger right on main view.",
+      "quick_upload_zone": "Persistent top action bar with drag-and-drop dropzone, file type icons (PDF, JPG, PNG), profile assigner dropdown, and category selector pills."
+    },
+    "profile_switcher": {
+      "style": "Top header dropdown & segment pill switcher supporting 'Self (John Doe)' and dependents ('Maya Doe - Daughter', 'Robert Doe - Father'). Changes active vault context with clear visual banner indicator."
+    },
+    "records_vault": {
+      "category_filters": ["All Records", "Prescriptions", "Lab Reports", "Imaging", "Vaccinations", "Insurance", "Other"],
+      "search_and_tagging": "Instant live search bar by doctor, hospital, tag, date range, or document name.",
+      "record_card": "Category badge, upload date, doctor/facility tag, security lock status, quick actions (Preview, Share, Download, Delete)."
+    },
+    "share_link_modal": {
+      "options": ["Select individual or multiple records", "Expiry timer (1 hour, 24 hours, 7 days, 30 days)", "Optional 4-digit doctor PIN", "Passphrase generator", "Revocable status badge"],
+      "output": "Copyable secure URL + QR code generator for clinical screen scanning."
+    },
+    "public_share_view": {
+      "unauthenticated_flow": "Clean PIN-entry challenge screen leading to a high-contrast, read-only medical record viewer with watermark, countdown expiry banner, and instant emergency profile access."
+    },
+    "structured_health_profile": {
+      "sections": [
+        "Blood Group & Vital Summary (e.g. O+, Organ Donor)",
+        "Known Allergies (High-visibility red/amber hazard pills)",
+        "Chronic Conditions & Medical History",
+        "Active Medications & Dosage Schedule",
+        "Emergency Contacts (ICE) with 1-click SMS/Share format"
+      ]
+    },
+    "audit_log": {
+      "columns": ["Timestamp", "Action Type (Upload, View, Share, Revoke, Login)", "Target Record", "IP / Location / Device", "Status"],
+      "filters": "Filter by event severity and date range with export CSV option."
+    }
+  },
+  "image_urls": {
+    "hero_doctor": "https://images.unsplash.com/photo-1666886573531-48d2e3c2b684?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzd8MHwxfHNlYXJjaHwxfHxkb2N0b3IlMjBtZWRpY2FsJTIwcmVjb3JkcyUyMGRhc2hib2FyZCUyMGhlYWx0aCUyMHBhdGllbnR8ZW58MHx8fHwxNzg5MjUyNDY5fDA&ixlib=rb-4.1.0&q=85",
+    "doctor_consulting": "https://images.unsplash.com/photo-1642975967602-653d378f3b5b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzd8MHwxfHNlYXJjaHw0fHxkb2N0b3IlMjBtZWRpY2FsJTIwcmVjb3JkcyUyMGRhc2hib2FyZCUyMGhlYWx0aCUyMHBhdGllbnR8ZW58MHx8fHwxNzg5MjUyNDY5fDA&ixlib=rb-4.1.0&q=85",
+    "vault_security": "https://images.unsplash.com/photo-1582139329536-e7284fece509?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2OTF8MHwxfHNlYXJjaHwyfHxtZWRpY2FsJTIwaGVhbHRoY2FyZSUyMHNlY3VyaXR5JTIwdmF1bHQlMjB0cnVzdHxlbnwwfHx8fDE3ODkyNTI0NzZ8MA&ixlib=rb-4.1.0&q=85",
+    "hospital_care": "https://images.unsplash.com/photo-1581056771392-8a90ddb76831?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2OTF8MHwxfHNlYXJjaHw0fHxtZWRpY2FsJTIwaGVhbHRoY2FyZSUyMHNlY3VyaXR5JTIwdmF1bHQlMjB0cnVzdHxlbnwwfHx8fDE3ODkyNTI0NzZ8MA&ixlib=rb-4.1.0&q=85"
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow data-testid attribute rule for ALL interactive elements (buttons, inputs, tabs, modal triggers, search, table rows, badges). Example: data-testid='upload-record-button'.",
+    "Always set explicit text color on hover states (e.g. hover:bg-teal-700 hover:text-white). Do not rely on color inheritance.",
+    "Ensure security widget (2FA status, Active Devices, Revocation links) is prominently featured on the main dashboard view, not hidden in settings.",
+    "Use standard Shadcn components for dialogs, tabs, dropdowns, input-otp, select, and sonner toasts, customizing classes for clinical styling.",
+    "Support dark mode toggle with smooth class transitions on html element.",
+    "Provide sample mock data for multiple profiles (Self, Dependent Child, Aging Parent), diverse medical categories, realistic audit logs, active temporary share links, and health stats so the demo is fully functional and interactive.",
+    "Implement export data functionality (download simulated health records zip or JSON archive).",
+    "Include time-limited share link simulation where links can be copied, tested in a public read-only viewer, or revoked instantly with visual status updates."
+  ],
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
+    "Do NOT use dark colors as gradients.",
+    "Do NOT center align the main app container globally.",
+    "Never use generic AI assistant emoji characters like 🤖🧠💭💡🔮 for medical icons; use Lucide or Phosphor icons exclusively.",
+    "Use 2-3x more spacing than cramped templates. Containers with borders must have internal padding p-6 or p-8.",
+    "Include micro-interactions, hover states, transition feedback, and accessibility focus states for all interactive elements."
+  ]
+},
+overwrite:true,path:
