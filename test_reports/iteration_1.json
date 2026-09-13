@@ -1,0 +1,36 @@
+{
+  "summary": "MediPassport backend: 34/34 pytest cases PASSED covering health, auth (login/register/refresh/logout/lockout/2FA full loop incl. TOTP + backup code), profiles CRUD + health update, records upload/list/filter/download/delete + validation (bad category/mime/25MB), shares w/ PIN + revoke (410), sessions incl. revoke-all, audit sorted desc, zip export, AI (Gemini) multi-turn recall + summarize + history clear, vitals CRUD incl. blood_pressure value2 + invalid type, Solana status + anchor (devnet SOL available today — real signature returned and cached on retry), Emergency token public flow + revoke → 404. Owner 2FA left disabled per instructions.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /objstore .../objects (Emergent Object Storage)", "issue": "Intermittent 500 Server Error on first PUT (observed once in run). Backend's put_object only retries storage init on 404, not on 500 — a transient upstream 500 propagates as 500 to client. Added test-side retry to work around. Suggest server-side single retry on 5xx from storage."},
+      {"endpoint": "POST /api/auth/register & /api/auth/login", "issue": "pydantic EmailStr rejects reserved TLDs (e.g. `.test`) with 422. The review request suggested `qa+<ts>@medipassport.test`; those emails cannot be registered. Not a bug (correct RFC/pydantic behavior) — noted so future testers use `@example.com`."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_medipassport_backend.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional) In backend/server.py put_object(): retry once on 5xx from storage, not only on 404 — currently a transient upstream 500 becomes a user-visible 500."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 1094 lines; consider splitting into routers/modules (auth, records, ai, solana, emergency) for maintainability.",
+    "Cookies set with samesite='none', secure=True — good for cross-site production but will not work over plain http (fine here since preview URL is https).",
+    "AI multi-turn: prior turns are replayed by calling send_message with only the user messages (assistant replies not injected). LLM re-generates history each call which incurs cost/latency but functionally works (recall test passed with MANGO42).",
+    "Solana _get_solana_kp caches globally; airdrop request is best-effort and correctly returns 503 when balance insufficient (spec-compliant).",
+    "Login lockout uses upsert with $set locked_until on every failed attempt (sliding window) — acceptable; document that behavior.",
+    "MongoDB `_id` is consistently stripped before returning objects — good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_medipassport_backend.py (created)"
+  ],
+  "success_rate": {"backend": "100% (34/34)", "frontend": "not tested (backend-only per request)"},
+  "test_credentials": "Owner lochanawasthi22@gmail.com / MediPass2026! (used); 2FA left disabled after test run.",
+  "seed_data_creation": "Created a `TEST_Record` (Lab Reports) under owner's self profile and a `TEST_Share` (revoked at end). AI history was cleared post-test. Emergency token was created then revoked. All vitals created during test were deleted. A new user qa+<ts>@example.com was registered for register/lockout coverage (not cleaned up — flagged as TEST_ data).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Suite is idempotent-safe: uses TEST_ prefixes, unique uuid emails, and cleans up ephemeral state (record delete test, share revoke, emergency revoke, 2FA disable). Only two pieces of durable state remain: the `TEST_Record` PNG and the QA user accounts. Solana devnet balance was non-zero during this run so the anchor test hit the 200 branch — future runs may legitimately return 503 (spec allows it).",
+  "rca of the issue": "N/A — no failures after test-side retry for a one-off storage 500."
+}

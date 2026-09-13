@@ -66,14 +66,16 @@ def put_object(path: str, data: bytes, content_type: str) -> dict:
     key = init_storage()
     if not key:
         raise HTTPException(500, "Storage unavailable")
-    r = requests.put(f"{STORAGE_URL}/objects/{path}",
-                     headers={"X-Storage-Key": key, "Content-Type": content_type},
-                     data=data, timeout=120)
-    if r.status_code == 404:
-        key = init_storage(force=True)
+    for attempt in range(2):
         r = requests.put(f"{STORAGE_URL}/objects/{path}",
                          headers={"X-Storage-Key": key, "Content-Type": content_type},
                          data=data, timeout=120)
+        if r.status_code == 404:
+            key = init_storage(force=True)
+            continue
+        if r.status_code >= 500 and attempt == 0:
+            continue  # transient upstream 5xx — retry once
+        break
     r.raise_for_status()
     return r.json()
 
@@ -1025,6 +1027,173 @@ async def public_emergency(token: str, request: Request):
 @api.get("/health")
 async def health():
     return {"status": "ok", "time": iso()}
+
+# ---------- Phone OTP (TextBelt free tier + console fallback) ----------
+TEXTBELT_KEY = os.environ.get("TEXTBELT_KEY", "textbelt")
+
+def _norm_phone(p: str) -> str:
+    return "".join(c for c in (p or "") if c.isdigit() or c == "+")
+
+class PhoneRequestIn(BaseModel):
+    phone: str
+
+class PhoneVerifyIn(BaseModel):
+    phone: str
+    code: str
+    name: Optional[str] = None
+
+@api.post("/auth/phone/request")
+async def phone_request(payload: PhoneRequestIn, request: Request):
+    phone = _norm_phone(payload.phone)
+    if len(phone) < 8:
+        raise HTTPException(400, "Invalid phone number")
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    now = now_utc()
+    expires = now + timedelta(minutes=10)
+    await db.phone_otps.update_one(
+        {"phone": phone},
+        {"$set": {"phone": phone, "code": code, "expires_at": iso(expires),
+                  "attempts": 0, "created_at": iso(now), "used": False}},
+        upsert=True,
+    )
+    delivery = "console"
+    delivery_error = None
+    try:
+        r = requests.post("https://textbelt.com/text", data={
+            "phone": phone, "message": f"MediPassport code: {code} (valid 10 min).",
+            "key": TEXTBELT_KEY,
+        }, timeout=10)
+        j = r.json() if r.ok else {}
+        if j.get("success"):
+            delivery = "sms"
+        else:
+            delivery_error = j.get("error", "textbelt refused")
+    except Exception as e:
+        delivery_error = str(e)[:120]
+    if delivery != "sms":
+        logger.info(f"[PHONE OTP] {phone} => {code} (SMS unavailable: {delivery_error})")
+    return {"ok": True, "delivery": delivery, "delivery_error": delivery_error,
+            "debug_code": code if delivery != "sms" else None}
+
+@api.post("/auth/phone/verify")
+async def phone_verify(payload: PhoneVerifyIn, request: Request, response: Response):
+    phone = _norm_phone(payload.phone)
+    doc = await db.phone_otps.find_one({"phone": phone, "used": False})
+    if not doc:
+        raise HTTPException(400, "Request a code first")
+    if datetime.fromisoformat(doc["expires_at"]) < now_utc():
+        raise HTTPException(400, "Code expired")
+    if doc.get("attempts", 0) >= 5:
+        raise HTTPException(429, "Too many attempts, request a new code")
+    if payload.code.strip() != doc["code"]:
+        await db.phone_otps.update_one({"phone": phone}, {"$inc": {"attempts": 1}})
+        raise HTTPException(401, "Invalid code")
+    await db.phone_otps.update_one({"phone": phone}, {"$set": {"used": True}})
+
+    user = await db.users.find_one({"phone": phone})
+    ip = get_ip(request); ua = request.headers.get("user-agent", "")
+    if not user:
+        uid = str(uuid.uuid4())
+        display_name = payload.name or f"User {phone[-4:]}"
+        user = {
+            "id": uid, "phone": phone, "email": None,
+            "name": display_name,
+            "password_hash": hash_password(secrets.token_urlsafe(24)),
+            "role": "user", "twofa_enabled": False, "totp_secret": None,
+            "backup_codes": [], "created_at": iso(),
+        }
+        await db.users.insert_one(user)
+        pid = str(uuid.uuid4())
+        await db.profiles.insert_one({
+            "id": pid, "user_id": uid, "name": display_name,
+            "relationship": "self", "date_of_birth": None, "gender": None,
+            "health": {"blood_group": None, "allergies": [], "conditions": [],
+                        "medications": [], "emergency_contact_name": None,
+                        "emergency_contact_phone": phone, "notes": None},
+            "created_at": iso(),
+        })
+        await audit(uid, "auth.register_phone", meta={"phone": phone}, ip=ip, ua=ua)
+
+    sid = str(uuid.uuid4())
+    await db.sessions.insert_one({
+        "id": sid, "user_id": user["id"], "ip": ip, "user_agent": ua,
+        "created_at": iso(), "last_seen": iso(), "revoked": False,
+    })
+    at = create_access_token(user["id"], sid); rt = create_refresh_token(user["id"], sid)
+    await audit(user["id"], "auth.login_phone", ip=ip, ua=ua)
+    set_auth_cookies(response, at, rt)
+    return {"id": user["id"], "phone": user.get("phone"), "email": user.get("email"),
+            "name": user["name"], "twofa_enabled": user.get("twofa_enabled", False)}
+
+class LinkPhoneIn(BaseModel):
+    phone: str
+    code: str
+
+@api.post("/auth/phone/link")
+async def link_phone(payload: LinkPhoneIn, user=Depends(get_current_user)):
+    phone = _norm_phone(payload.phone)
+    doc = await db.phone_otps.find_one({"phone": phone, "used": False})
+    if not doc:
+        raise HTTPException(400, "Request a code first")
+    if datetime.fromisoformat(doc["expires_at"]) < now_utc():
+        raise HTTPException(400, "Code expired")
+    if payload.code.strip() != doc["code"]:
+        raise HTTPException(401, "Invalid code")
+    if await db.users.find_one({"phone": phone, "id": {"$ne": user["id"]}}):
+        raise HTTPException(400, "Phone already linked to another account")
+    await db.phone_otps.update_one({"phone": phone}, {"$set": {"used": True}})
+    await db.users.update_one({"id": user["id"]}, {"$set": {"phone": phone}})
+    await audit(user["id"], "security.phone_linked", meta={"phone": phone})
+    return {"ok": True}
+
+# ---------- Places (nearby hospitals / blood banks / pharmacies) ----------
+OVERPASS_URL = os.environ.get("OVERPASS_URL", "https://overpass-api.de/api/interpreter")
+
+_place_cache = {}
+
+@api.get("/places")
+async def nearby_places(lat: float, lon: float, radius: int = 5000, type: str = "hospital",
+                        user=Depends(get_current_user)):
+    if type not in {"hospital", "blood_donation", "pharmacy", "clinic", "doctors"}:
+        raise HTTPException(400, "Unknown place type")
+    radius = max(500, min(20000, radius))
+    key = f"{type}:{round(lat,3)}:{round(lon,3)}:{radius}"
+    if key in _place_cache and (now_utc() - _place_cache[key]["at"]).total_seconds() < 900:
+        return _place_cache[key]["data"]
+    if type == "blood_donation":
+        q = f'[out:json][timeout:20];nwr(around:{radius},{lat},{lon})["healthcare"="blood_donation"];out center 40;'
+    elif type in ("hospital", "clinic", "pharmacy", "doctors"):
+        q = f'[out:json][timeout:20];nwr(around:{radius},{lat},{lon})["amenity"="{type}"];out center 40;'
+    else:
+        raise HTTPException(400, "Unsupported type")
+    try:
+        r = requests.post(OVERPASS_URL, data={"data": q}, timeout=25,
+                          headers={"User-Agent": "MediPassport/1.0"})
+        r.raise_for_status()
+        raw = r.json().get("elements", [])
+    except Exception as e:
+        logger.error(f"Overpass error: {e}")
+        raise HTTPException(502, "Places service unavailable")
+    results = []
+    for el in raw:
+        c = el.get("center") or {"lat": el.get("lat"), "lon": el.get("lon")}
+        if not c.get("lat"): continue
+        t = el.get("tags", {}) or {}
+        results.append({
+            "id": f"{el.get('type')}/{el.get('id')}",
+            "name": t.get("name") or t.get("operator") or f"Unnamed {type}",
+            "lat": c["lat"], "lon": c["lon"],
+            "phone": t.get("phone") or t.get("contact:phone"),
+            "address": ", ".join(filter(None, [
+                t.get("addr:housenumber"), t.get("addr:street"),
+                t.get("addr:city"), t.get("addr:postcode"),
+            ])) or None,
+            "emergency": t.get("emergency") == "yes",
+            "opening_hours": t.get("opening_hours"),
+            "website": t.get("website") or t.get("contact:website"),
+        })
+    _place_cache[key] = {"at": now_utc(), "data": results}
+    return results
 
 app.include_router(api)
 
