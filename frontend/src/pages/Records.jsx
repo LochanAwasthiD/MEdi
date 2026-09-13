@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, apiErr, API } from "@/lib/api";
 import { useProfiles } from "@/context/ProfileContext";
-import { Search, FileText, Upload, Download, Trash2, Share2, Filter } from "lucide-react";
+import { Search, FileText, Upload, Download, Trash2, Share2, Filter, Link2, ExternalLink, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -72,6 +72,18 @@ export default function Records() {
       toast.success("Record deleted");
       load();
     } catch (e) { toast.error(apiErr(e)); }
+  };
+
+  const [anchoring, setAnchoring] = useState(null);
+  const anchor = async (r) => {
+    setAnchoring(r.id);
+    try {
+      const { data } = await api.post(`/records/${r.id}/anchor`);
+      toast.success("Anchored to Solana devnet");
+      window.open(data.explorer, "_blank");
+      load();
+    } catch (e) { toast.error(apiErr(e, "Anchor failed")); }
+    finally { setAnchoring(null); }
   };
 
   return (
@@ -147,6 +159,16 @@ export default function Records() {
               )}
               <div className="mt-4 flex gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
                 <Button size="sm" variant="ghost" onClick={() => download(r)} data-testid={`download-btn-${r.id}`} className="flex-1"><Download className="w-3.5 h-3.5 mr-1.5" />Download</Button>
+                {r.chain_signature ? (
+                  <a href={`https://explorer.solana.com/tx/${r.chain_signature}?cluster=devnet`} target="_blank" rel="noreferrer" data-testid={`verified-link-${r.id}`}>
+                    <Button size="sm" variant="ghost" className="text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50"><Link2 className="w-3.5 h-3.5 mr-1.5" />Verified<ExternalLink className="w-3 h-3 ml-1" /></Button>
+                  </a>
+                ) : (
+                  <Button size="sm" variant="ghost" onClick={() => anchor(r)} disabled={anchoring === r.id} className="text-teal-700 hover:text-teal-800 hover:bg-teal-50" data-testid={`anchor-btn-${r.id}`}>
+                    {anchoring === r.id ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5 mr-1.5" />}
+                    Verify on-chain
+                  </Button>
+                )}
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button size="sm" variant="ghost" className="text-red-600 hover:text-red-700 hover:bg-red-50" data-testid={`delete-btn-${r.id}`}><Trash2 className="w-3.5 h-3.5" /></Button>

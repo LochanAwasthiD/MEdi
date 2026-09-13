@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { ShieldCheck, ShieldAlert, Monitor, LogOut, Download, Copy, Check, Plus, Trash2, UserPlus, Loader2 } from "lucide-react";
+import { ShieldCheck, ShieldAlert, Monitor, LogOut, Download, Copy, Check, Plus, Trash2, UserPlus, Loader2, Link2 } from "lucide-react";
 import { toast } from "sonner";
 
 function TwoFASetup({ onDone }) {
@@ -89,12 +89,13 @@ export default function Settings() {
   const [showAddProfile, setShowAddProfile] = useState(false);
   const [pwToDisable, setPwToDisable] = useState("");
   const [showDisable, setShowDisable] = useState(false);
+  const [chain, setChain] = useState(null);
 
   const loadSessions = async () => {
     const { data } = await api.get("/sessions");
     setSessions(data);
   };
-  useEffect(() => { loadSessions(); }, []);
+  useEffect(() => { loadSessions(); api.get("/solana/status").then(r => setChain(r.data)).catch(() => {}); }, []);
 
   const revokeSession = async (id) => {
     try { await api.delete(`/sessions/${id}`); toast.success("Device revoked"); loadSessions(); }
@@ -153,10 +154,11 @@ export default function Settings() {
       </div>
 
       <Tabs defaultValue="security">
-        <TabsList className="grid grid-cols-4 max-w-2xl">
+        <TabsList className="grid grid-cols-5 max-w-2xl">
           <TabsTrigger value="security" data-testid="tab-security">Security</TabsTrigger>
           <TabsTrigger value="devices" data-testid="tab-devices">Devices</TabsTrigger>
           <TabsTrigger value="profiles" data-testid="tab-profiles">Profiles</TabsTrigger>
+          <TabsTrigger value="chain" data-testid="tab-chain">Blockchain</TabsTrigger>
           <TabsTrigger value="data" data-testid="tab-data">Data</TabsTrigger>
         </TabsList>
 
@@ -240,6 +242,33 @@ export default function Settings() {
               )}
             </Card>
           ))}
+        </TabsContent>
+
+        <TabsContent value="chain" className="mt-6">
+          <Card className="p-6">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-xl bg-purple-100 flex items-center justify-center flex-shrink-0"><Link2 className="w-6 h-6 text-purple-700" /></div>
+              <div className="flex-1">
+                <div className="font-semibold text-slate-900 dark:text-white">Tamper-proof record anchoring</div>
+                <div className="text-sm text-slate-500 mt-1">SHA-256 hashes of your records are anchored to Solana devnet as memo transactions — anyone can verify a record hasn&apos;t been altered.</div>
+                {chain?.configured ? (
+                  <div className="mt-4 space-y-2">
+                    <div className="text-xs text-slate-500">Anchor account (devnet)</div>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 text-xs bg-slate-50 dark:bg-slate-800 rounded px-2 py-1.5 font-mono truncate">{chain.pubkey}</code>
+                      <a href={`https://explorer.solana.com/address/${chain.pubkey}?cluster=devnet`} target="_blank" rel="noreferrer" className="text-xs text-teal-700 hover:underline whitespace-nowrap">View on Explorer</a>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                      Balance: <span className="font-mono font-medium text-slate-900 dark:text-white">{chain.balance_sol?.toFixed(4) ?? "—"} SOL</span>
+                      {chain.balance_sol < 0.001 && (
+                        <a href={`https://faucet.solana.com/?address=${chain.pubkey}`} target="_blank" rel="noreferrer" className="text-teal-700 hover:underline">Fund via faucet ↗</a>
+                      )}
+                    </div>
+                  </div>
+                ) : <div className="mt-3 text-sm text-amber-700">Blockchain verification not configured on this backend.</div>}
+              </div>
+            </div>
+          </Card>
         </TabsContent>
 
         <TabsContent value="data" className="mt-6">

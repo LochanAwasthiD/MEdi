@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { LayoutDashboard, FileText, HeartPulse, Share2, ScrollText, Settings as Gear, LogOut, ShieldCheck, ChevronDown, Users } from "lucide-react";
+import { LayoutDashboard, FileText, HeartPulse, Share2, ScrollText, Settings as Gear, LogOut, ShieldCheck, ChevronDown, Users, Bot, Activity, Siren } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useProfiles } from "@/context/ProfileContext";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel } from "@/components/ui/dropdown-menu";
@@ -9,8 +9,11 @@ import { Badge } from "@/components/ui/badge";
 const nav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, tid: "nav-dashboard" },
   { to: "/records", label: "Records", icon: FileText, tid: "nav-records" },
+  { to: "/vitals", label: "Vitals", icon: Activity, tid: "nav-vitals" },
   { to: "/health", label: "Health Profile", icon: HeartPulse, tid: "nav-health" },
+  { to: "/assistant", label: "AI Assistant", icon: Bot, tid: "nav-assistant" },
   { to: "/shares", label: "Share Links", icon: Share2, tid: "nav-shares" },
+  { to: "/emergency", label: "Emergency Pass", icon: Siren, tid: "nav-emergency" },
   { to: "/audit", label: "Audit Log", icon: ScrollText, tid: "nav-audit" },
   { to: "/settings", label: "Settings", icon: Gear, tid: "nav-settings" },
 ];

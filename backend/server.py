@@ -706,6 +706,321 @@ async def export_all(request: Request, user=Depends(get_current_user)):
     return StreamingResponse(buf, media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="medipassport-export-{datetime.now().strftime("%Y%m%d")}.zip"'})
 
+# ---------- AI Assistant (Gemini + Backboard) ----------
+from emergentintegrations.llm.chat import LlmChat, UserMessage
+
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
+
+def _profile_context(profile):
+    if not profile: return ""
+    h = profile.get("health") or {}
+    parts = [f"Patient: {profile['name']} ({profile.get('relationship','self')})"]
+    if h.get("blood_group"): parts.append(f"Blood group: {h['blood_group']}")
+    if h.get("allergies"): parts.append(f"Allergies: {', '.join(h['allergies'])}")
+    if h.get("conditions"): parts.append(f"Chronic conditions: {', '.join(h['conditions'])}")
+    if h.get("medications"): parts.append(f"Current medications: {', '.join(h['medications'])}")
+    return "\n".join(parts)
+
+class ChatIn(BaseModel):
+    profile_id: str
+    message: str
+    session_id: Optional[str] = None
+
+@api.post("/ai/chat")
+async def ai_chat(payload: ChatIn, user=Depends(get_current_user)):
+    prof = await db.profiles.find_one({"id": payload.profile_id, "user_id": user["id"]})
+    if not prof:
+        raise HTTPException(404, "Profile not found")
+    sid = payload.session_id or f"{user['id']}:{prof['id']}"
+    # persist user message
+    records = await db.records.find({"profile_id": prof["id"], "is_deleted": False}).sort("record_date", -1).to_list(30)
+    rec_ctx = "\n".join([f"- {r['title']} ({r['category']}, {r.get('record_date','')[:10]}) — {r.get('doctor','') or 'no doctor'}, {r.get('notes','') or ''}" for r in records]) or "(no records on file)"
+    system = (
+        "You are Backboard, a calm, plain-English health assistant inside MediPassport. "
+        "You explain records and vitals in simple language, never diagnose or prescribe, "
+        "and always encourage the user to consult their doctor for medical decisions. "
+        "Keep replies short (3-5 sentences) unless asked for detail.\n\n"
+        f"### Patient snapshot\n{_profile_context(prof)}\n\n### Recent records\n{rec_ctx}"
+    )
+    # Load history from Mongo (multi-turn)
+    prior = await db.ai_messages.find({"session_id": sid}).sort("created_at", 1).to_list(50)
+    chat = LlmChat(api_key=EMERGENT_KEY, session_id=sid, system_message=system).with_model("gemini", GEMINI_MODEL)
+    # replay prior turns
+    for m in prior:
+        if m["role"] == "user":
+            try:
+                await chat.send_message(UserMessage(text=m["content"]))
+            except Exception:
+                pass
+    try:
+        reply = await chat.send_message(UserMessage(text=payload.message))
+    except Exception as e:
+        logger.error(f"AI error: {e}")
+        raise HTTPException(502, "AI service unavailable")
+    now = iso()
+    await db.ai_messages.insert_many([
+        {"id": str(uuid.uuid4()), "session_id": sid, "user_id": user["id"], "role": "user", "content": payload.message, "created_at": now},
+        {"id": str(uuid.uuid4()), "session_id": sid, "user_id": user["id"], "role": "assistant", "content": reply, "created_at": iso()},
+    ])
+    return {"reply": reply, "session_id": sid}
+
+@api.get("/ai/history")
+async def ai_history(profile_id: str, user=Depends(get_current_user)):
+    sid = f"{user['id']}:{profile_id}"
+    msgs = await db.ai_messages.find({"session_id": sid}).sort("created_at", 1).to_list(200)
+    for m in msgs: m.pop("_id", None)
+    return msgs
+
+@api.delete("/ai/history")
+async def ai_clear(profile_id: str, user=Depends(get_current_user)):
+    sid = f"{user['id']}:{profile_id}"
+    await db.ai_messages.delete_many({"session_id": sid, "user_id": user["id"]})
+    return {"ok": True}
+
+class SummarizeIn(BaseModel):
+    profile_id: str
+
+@api.post("/ai/summarize")
+async def ai_summarize(payload: SummarizeIn, user=Depends(get_current_user)):
+    prof = await db.profiles.find_one({"id": payload.profile_id, "user_id": user["id"]})
+    if not prof:
+        raise HTTPException(404, "Profile not found")
+    records = await db.records.find({"profile_id": prof["id"], "is_deleted": False}).sort("record_date", -1).to_list(50)
+    ctx = "\n".join([f"- {r['title']} ({r['category']}, {r.get('record_date','')[:10]}): {r.get('notes','') or 'no notes'}" for r in records]) or "No records on file."
+    system = "You summarize personal health records in warm plain English. Never diagnose. 4-6 sentences."
+    chat = LlmChat(api_key=EMERGENT_KEY, session_id=f"summary:{prof['id']}:{uuid.uuid4()}", system_message=system).with_model("gemini", GEMINI_MODEL)
+    prompt = f"Summarize this patient snapshot for a family member:\n\n{_profile_context(prof)}\n\nRecent records:\n{ctx}"
+    try:
+        reply = await chat.send_message(UserMessage(text=prompt))
+    except Exception as e:
+        logger.error(f"AI summary error: {e}")
+        raise HTTPException(502, "AI unavailable")
+    return {"summary": reply}
+
+# ---------- Vitals (Tiger Data — time-series on Mongo) ----------
+VITAL_TYPES = {"heart_rate", "blood_pressure", "spo2", "temperature", "weight", "glucose"}
+
+class VitalIn(BaseModel):
+    profile_id: str
+    type: str
+    value: float
+    value2: Optional[float] = None   # for BP diastolic
+    unit: Optional[str] = None
+    recorded_at: Optional[str] = None
+    source: Optional[str] = "manual"
+    notes: Optional[str] = None
+
+@api.post("/vitals")
+async def add_vital(payload: VitalIn, request: Request, user=Depends(get_current_user)):
+    if payload.type not in VITAL_TYPES:
+        raise HTTPException(400, f"Invalid type. Allowed: {sorted(VITAL_TYPES)}")
+    prof = await db.profiles.find_one({"id": payload.profile_id, "user_id": user["id"]})
+    if not prof:
+        raise HTTPException(404, "Profile not found")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "profile_id": payload.profile_id,
+        "type": payload.type,
+        "value": payload.value,
+        "value2": payload.value2,
+        "unit": payload.unit,
+        "source": payload.source,
+        "notes": payload.notes,
+        "recorded_at": payload.recorded_at or iso(),
+        "created_at": iso(),
+    }
+    await db.vitals.insert_one(doc)
+    doc.pop("_id", None)
+    await audit(user["id"], "vitals.recorded", target=doc["id"],
+                meta={"type": payload.type, "value": payload.value}, ip=get_ip(request))
+    return doc
+
+@api.get("/vitals")
+async def list_vitals(profile_id: str, type: Optional[str] = None, limit: int = 200,
+                      user=Depends(get_current_user)):
+    q = {"user_id": user["id"], "profile_id": profile_id}
+    if type: q["type"] = type
+    docs = await db.vitals.find(q).sort("recorded_at", -1).to_list(limit)
+    for d in docs: d.pop("_id", None)
+    return docs
+
+@api.delete("/vitals/{vid}")
+async def delete_vital(vid: str, user=Depends(get_current_user)):
+    r = await db.vitals.delete_one({"id": vid, "user_id": user["id"]})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Not found")
+    return {"ok": True}
+
+# ---------- Solana verification (devnet memo anchor) ----------
+import hashlib
+try:
+    from solana.rpc.async_api import AsyncClient as SolClient
+    from solders.keypair import Keypair as SolKeypair
+    from solders.pubkey import Pubkey as SolPubkey
+    from solders.message import MessageV0
+    from solders.transaction import VersionedTransaction
+    from solders.instruction import Instruction as SolInstruction
+    SOLANA_OK = True
+except Exception as e:
+    logger.warning(f"Solana lib unavailable: {e}")
+    SOLANA_OK = False
+
+SOLANA_RPC = os.environ.get("SOLANA_RPC_URL", "https://api.devnet.solana.com")
+MEMO_PROGRAM_ID = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
+
+def _build_memo_ix(signer_pubkey, memo_text: str):
+    """Build a Memo v2 instruction manually — no spl.memo dependency."""
+    return SolInstruction(
+        program_id=SolPubkey.from_string(MEMO_PROGRAM_ID),
+        accounts=[],
+        data=memo_text.encode("utf-8"),
+    )
+
+_solana_kp = None
+def _get_solana_kp():
+    global _solana_kp
+    if _solana_kp is not None:
+        return _solana_kp
+    raw = os.environ.get("SOLANA_SECRET_KEY", "")
+    if not raw or not SOLANA_OK:
+        return None
+    try:
+        arr = bytes([int(x) for x in raw.split(",")])
+        _solana_kp = SolKeypair.from_bytes(arr)
+        return _solana_kp
+    except Exception as e:
+        logger.error(f"Bad SOLANA_SECRET_KEY: {e}")
+        return None
+
+async def _airdrop_if_needed():
+    kp = _get_solana_kp()
+    if not kp: return
+    async with SolClient(SOLANA_RPC) as rpc:
+        bal = (await rpc.get_balance(kp.pubkey())).value
+        if bal < 100_000_000:  # < 0.1 SOL
+            try:
+                await rpc.request_airdrop(kp.pubkey(), 1_000_000_000)
+                logger.info("Requested devnet airdrop")
+            except Exception as e:
+                logger.warning(f"Airdrop failed: {e}")
+
+@api.post("/records/{rid}/anchor")
+async def anchor_record(rid: str, request: Request, user=Depends(get_current_user)):
+    rec = await db.records.find_one({"id": rid, "user_id": user["id"], "is_deleted": False})
+    if not rec:
+        raise HTTPException(404, "Record not found")
+    if rec.get("chain_signature"):
+        return {"signature": rec["chain_signature"], "hash": rec.get("chain_hash"),
+                "explorer": f"https://explorer.solana.com/tx/{rec['chain_signature']}?cluster=devnet",
+                "anchored_at": rec.get("chain_anchored_at")}
+    kp = _get_solana_kp()
+    if not kp:
+        raise HTTPException(503, "Blockchain verification not configured")
+    # hash the file bytes
+    try:
+        data, _ = get_object(rec["storage_path"])
+    except Exception as e:
+        raise HTTPException(500, f"File fetch failed: {e}")
+    h = hashlib.sha256(data).hexdigest()
+    memo = f"MediPassport|rec:{rid[:8]}|sha256:{h}"
+    try:
+        async with SolClient(SOLANA_RPC) as rpc:
+            # ensure balance — try airdrop if empty
+            bal = (await rpc.get_balance(kp.pubkey())).value
+            if bal < 5_000_000:
+                try:
+                    await rpc.request_airdrop(kp.pubkey(), 500_000_000)
+                    for _ in range(10):
+                        import asyncio as _a
+                        await _a.sleep(1)
+                        bal = (await rpc.get_balance(kp.pubkey())).value
+                        if bal > 0: break
+                except Exception as ae:
+                    logger.warning(f"Airdrop failed: {ae}")
+                if bal < 5_000_000:
+                    raise HTTPException(503, "Devnet SOL exhausted. Fund the pubkey at faucet.solana.com and retry.")
+            memo_ix = _build_memo_ix(kp.pubkey(), memo)
+            recent = (await rpc.get_latest_blockhash()).value.blockhash
+            msg = MessageV0.try_compile(payer=kp.pubkey(), instructions=[memo_ix],
+                                         address_lookup_table_accounts=[], recent_blockhash=recent)
+            tx = VersionedTransaction(msg, [kp])
+            resp = await rpc.send_transaction(tx)
+            sig = str(resp.value)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Solana anchor failed: {e}")
+        raise HTTPException(502, f"On-chain anchor failed: {str(e)[:200]}")
+    anchored_at = iso()
+    await db.records.update_one({"id": rid}, {"$set": {
+        "chain_signature": sig, "chain_hash": h, "chain_anchored_at": anchored_at,
+    }})
+    await audit(user["id"], "record.anchored", target=rid,
+                meta={"sig": sig, "hash": h}, ip=get_ip(request))
+    return {"signature": sig, "hash": h, "anchored_at": anchored_at,
+            "explorer": f"https://explorer.solana.com/tx/{sig}?cluster=devnet"}
+
+@api.get("/solana/status")
+async def solana_status(user=Depends(get_current_user)):
+    kp = _get_solana_kp()
+    if not kp:
+        return {"configured": False}
+    try:
+        async with SolClient(SOLANA_RPC) as rpc:
+            bal = (await rpc.get_balance(kp.pubkey())).value
+        return {"configured": True, "pubkey": str(kp.pubkey()), "balance_sol": bal / 1_000_000_000, "cluster": "devnet"}
+    except Exception as e:
+        return {"configured": True, "pubkey": str(kp.pubkey()), "error": str(e)[:120]}
+
+# ---------- Emergency profile (NFC/QR-friendly public view) ----------
+@api.post("/profiles/{pid}/emergency-token")
+async def gen_emergency_token(pid: str, request: Request, user=Depends(get_current_user)):
+    prof = await db.profiles.find_one({"id": pid, "user_id": user["id"]})
+    if not prof:
+        raise HTTPException(404, "Not found")
+    token = secrets.token_urlsafe(18)
+    await db.profiles.update_one({"id": pid}, {"$set": {"emergency_token": token, "emergency_enabled_at": iso()}})
+    await audit(user["id"], "emergency.token_created", target=pid, ip=get_ip(request))
+    return {"token": token, "url": f"{FRONTEND_URL}/emergency/{token}"}
+
+@api.delete("/profiles/{pid}/emergency-token")
+async def revoke_emergency_token(pid: str, user=Depends(get_current_user)):
+    await db.profiles.update_one({"id": pid, "user_id": user["id"]},
+        {"$unset": {"emergency_token": "", "emergency_enabled_at": ""}})
+    return {"ok": True}
+
+@api.get("/public/emergency/{token}")
+async def public_emergency(token: str, request: Request):
+    prof = await db.profiles.find_one({"emergency_token": token})
+    if not prof:
+        raise HTTPException(404, "Emergency profile not found")
+    h = prof.get("health") or {}
+    # log access
+    await audit(prof["user_id"], "emergency.accessed", target=prof["id"],
+                meta={"ip": get_ip(request)}, ip=get_ip(request),
+                ua=request.headers.get("user-agent", ""))
+    # latest vitals summary
+    latest = {}
+    for t in VITAL_TYPES:
+        v = await db.vitals.find_one({"profile_id": prof["id"], "type": t}, sort=[("recorded_at", -1)])
+        if v:
+            latest[t] = {"value": v["value"], "value2": v.get("value2"),
+                          "unit": v.get("unit"), "recorded_at": v["recorded_at"]}
+    return {
+        "name": prof["name"],
+        "relationship": prof.get("relationship"),
+        "date_of_birth": prof.get("date_of_birth"),
+        "blood_group": h.get("blood_group"),
+        "allergies": h.get("allergies", []),
+        "conditions": h.get("conditions", []),
+        "medications": h.get("medications", []),
+        "emergency_contact_name": h.get("emergency_contact_name"),
+        "emergency_contact_phone": h.get("emergency_contact_phone"),
+        "notes": h.get("notes"),
+        "latest_vitals": latest,
+    }
+
 # ---------- Health ----------
 @api.get("/health")
 async def health():

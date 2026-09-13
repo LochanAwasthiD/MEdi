@@ -13,6 +13,10 @@ import Shares from "@/pages/Shares";
 import AuditLog from "@/pages/AuditLog";
 import Settings from "@/pages/Settings";
 import PublicShare from "@/pages/PublicShare";
+import AIAssistant from "@/pages/AIAssistant";
+import Vitals from "@/pages/Vitals";
+import Emergency from "@/pages/Emergency";
+import PublicEmergency from "@/pages/PublicEmergency";
 import AppLayout from "@/components/AppLayout";
 
 function Protected({ children }) {
@@ -34,11 +38,15 @@ function App() {
               <Route path="/login" element={<Login />} />
               <Route path="/signup" element={<Signup />} />
               <Route path="/share/:token" element={<PublicShare />} />
+              <Route path="/emergency/:token" element={<PublicEmergency />} />
               <Route element={<Protected><AppLayout /></Protected>}>
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/records" element={<Records />} />
+                <Route path="/vitals" element={<Vitals />} />
                 <Route path="/health" element={<HealthProfile />} />
+                <Route path="/assistant" element={<AIAssistant />} />
                 <Route path="/shares" element={<Shares />} />
+                <Route path="/emergency" element={<Emergency />} />
                 <Route path="/audit" element={<AuditLog />} />
                 <Route path="/settings" element={<Settings />} />
               </Route>
